@@ -30,7 +30,7 @@ from rich.console import Console
 console = Console()
 
 # --- Configuration ---
-DONGLE_ADDRESS = "socket://192.168.0.10:35000"
+DONGLE_ADDRESS = "socket://192.168.0.10:35000"  # check your dongle's manual/box
 ENGINE_OFF_READINGS_LIMIT = 6   # consecutive zero-RPM readings before "engine off"
 POLL_INTERVAL = 0.5             # seconds between readings
 
@@ -38,7 +38,10 @@ OUTLIER_STD_MULTIPLIER = 2.0    # accel events beyond this many std devs count a
 JERK_STD_MULTIPLIER = 2.0       # same idea, but for sudden changes in acceleration
 LOW_SPEED_DAMPEN_KMH = 15       # braking below this speed is weighted down (stop-start traffic)
 LOW_SPEED_BRAKE_WEIGHT = 0.4    # how much to discount low-speed braking events
-SCORE_SCALE = 5                 # tunable - controls how harshly penalty-per-minute hits the score
+SCORE_SCALE = 1.5               # tunable - controls how harshly penalty-per-minute hits the score
+                                 # (was 5 - too aggressive, floored every real drive to 0)
+MAX_PLAUSIBLE_ACCEL = 20        # km/h per second - no real car does more than this; anything
+                                 # beyond it is treated as a sensor glitch, not real driving
 
 
 def connect():
@@ -161,9 +164,18 @@ def main():
             if prev_speed is not None and prev_time is not None:
                 time_diff = current_time - prev_time
                 if time_diff > 0:
-                    acceleration = (current_speed - prev_speed) / time_diff
-                    if prev_accel is not None:
-                        jerk = (acceleration - prev_accel) / time_diff
+                    raw_accel = (current_speed - prev_speed) / time_diff
+
+                    if abs(raw_accel) > MAX_PLAUSIBLE_ACCEL:
+                        # Sensor glitch (e.g. a garbled OBD read) - no real car
+                        # accelerates this fast. Discard the bad speed value and
+                        # carry the last known good speed forward instead.
+                        current_speed = prev_speed
+                        acceleration = 0
+                    else:
+                        acceleration = raw_accel
+                        if prev_accel is not None:
+                            jerk = (acceleration - prev_accel) / time_diff
 
             readings.append({
                 "time": current_time,
